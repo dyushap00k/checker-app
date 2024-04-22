@@ -6,12 +6,14 @@ import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
 import android.util.Log
+import android.widget.Button
 import android.widget.Toast
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -20,6 +22,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var viewFinder: PreviewView
     private lateinit var gridOverlayView: GridOverlayView
+    private lateinit var imageCapture: ImageCapture // Объявляем переменную imageCapture в классе MainActivity
 
     companion object {
         private const val TAG = "CameraActivity"
@@ -32,7 +35,10 @@ class MainActivity : AppCompatActivity() {
 
         viewFinder = findViewById(R.id.viewFinder)
         gridOverlayView = findViewById(R.id.gridOverlayView)
-
+        val captureButton: Button = findViewById(R.id.captureButton)
+        captureButton.setOnClickListener {
+            takePhoto()
+        }
         if (allPermissionsGranted()) {
             startCamera()
         } else {
@@ -56,12 +62,14 @@ class MainActivity : AppCompatActivity() {
                 it.setSurfaceProvider(viewFinder.surfaceProvider)
             }
 
+            imageCapture = ImageCapture.Builder().build() // Создаем ImageCapture здесь
+
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview
+                    this, cameraSelector, preview, imageCapture // Добавляем imageCapture в bindToLifecycle
                 )
             } catch (exc: Exception) {
                 Log.e(TAG, "Ошибка при использовании камеры", exc)
@@ -93,4 +101,40 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    private fun takePhoto() {
+        if (!::imageCapture.isInitialized) {
+            Log.e(TAG, "ImageCapture не инициализирован")
+            return
+        }
+
+        // Получение временной директории для сохранения изображения
+        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}.jpg")
+
+        // Создание запроса для захвата изображения
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+
+        // Захват изображения
+        imageCapture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    // Фото успешно сохранено, можно обновить UI или выполнить другие действия
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Фото сохранено: ${photoFile.absolutePath}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    // Произошла ошибка при сохранении фото
+                    Log.e(TAG, "Ошибка при сохранении фото", exception)
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Ошибка при сохранении фото", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
+
+
 }

@@ -13,7 +13,12 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.Socket
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -27,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "CameraActivity"
         private const val REQUEST_CAMERA_PERMISSION = 123
+        private const val SERVER_IP = "192.168.0.100"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,34 +113,54 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Получение временной директории для сохранения изображения
-        val photoFile = File(externalMediaDirs.firstOrNull(), "${System.currentTimeMillis()}.jpg")
-
-        // Создание запроса для захвата изображения
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-
         // Захват изображения
         imageCapture.takePicture(
-            outputOptions,
             ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    // Фото успешно сохранено, можно обновить UI или выполнить другие действия
-                    runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Фото сохранено: ${photoFile.absolutePath}", Toast.LENGTH_SHORT).show()
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    val buffer = image.planes[0].buffer
+                    val bytes = ByteArray(buffer.capacity())
+                    buffer.get(bytes)
+
+                    // Выполнение сетевой операции в фоновом потоке
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            // Отправка байтов на сервер
+                            val socket = Socket(SERVER_IP, 12345)
+                            val outputStream = socket.getOutputStream()
+                            outputStream.write(bytes)
+                            outputStream.close()
+                            socket.close()
+
+                            // Обновление UI (показать сообщение об успешной отправке)
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(this@MainActivity, "Фото успешно отправлено на сервер", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            // Обработка ошибок
+                            Log.e(TAG, "Ошибка при отправке фото на сервер", e)
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(this@MainActivity, "Ошибка при отправке фото на сервер", Toast.LENGTH_SHORT).show()
+                            }
+                        } finally {
+                            image.close()
+                        }
                     }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    // Произошла ошибка при сохранении фото
-                    Log.e(TAG, "Ошибка при сохранении фото", exception)
+                    // Произошла ошибка при захвате фото
+                    Log.e(TAG, "Ошибка при захвате фото", exception)
                     runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Ошибка при сохранении фото", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Ошибка при захвате фото", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
         )
     }
+
+
+
 
 
 }

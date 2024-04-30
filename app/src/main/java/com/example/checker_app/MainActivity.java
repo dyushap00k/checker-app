@@ -1,7 +1,13 @@
 package com.example.checker_app;
 
+import static com.example.checker_app.FullScreenImageActivity.EXTRA_IMAGE_BYTES;
+
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.os.Bundle;
 import android.util.Base64;
 import android.util.Log;
@@ -9,7 +15,9 @@ import android.widget.Button;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.AspectRatio;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
@@ -20,13 +28,13 @@ import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import okhttp3.ResponseBody;
 import retrofit2.Call;
@@ -41,11 +49,10 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "CameraActivity";
     private static final int REQUEST_CAMERA_PERMISSION = 123;
-    private static final String SERVER_IP = "192.168.0.100";
     private ApiService retrofitInterface;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
@@ -63,16 +70,31 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+
     private void startCamera() {
         try {
             ProcessCameraProvider cameraProvider = ProcessCameraProvider.getInstance(this).get();
 
-            Preview preview = new Preview.Builder().build();
+            CameraSelector cameraSelector = new CameraSelector.Builder()
+                    .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                    .build();
+
+            Preview preview = new Preview.Builder()
+                    .setTargetAspectRatio(AspectRatio.RATIO_16_9)
+                    .build();
             preview.setSurfaceProvider(viewFinder.getSurfaceProvider());
 
-            imageCapture = new ImageCapture.Builder().build();
+            imageCapture = new ImageCapture.Builder()
+                    .setTargetAspectRatio(AspectRatio.RATIO_16_9)
+                    .setFlashMode(ImageCapture.FLASH_MODE_AUTO)
+                    .build();
 
-            CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+            Retrofit retrofit = new Retrofit.Builder()
+                    .baseUrl("http://192.168.0.100:8080/")
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build();
+
+            retrofitInterface = retrofit.create(ApiService.class);
 
             cameraProvider.unbindAll();
             cameraProvider.bindToLifecycle(
@@ -85,6 +107,7 @@ public class MainActivity extends AppCompatActivity {
             Log.e(TAG, "Error occurred while using camera", exc);
         }
     }
+
 
     private boolean allPermissionsGranted() {
         return ContextCompat.checkSelfPermission(
@@ -124,20 +147,7 @@ public class MainActivity extends AppCompatActivity {
                 new ImageCapture.OnImageCapturedCallback() {
                     @Override
                     public void onCaptureSuccess(@NonNull ImageProxy image) {
-                        ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-                        byte[] bytes = new byte[buffer.capacity()];
-                        buffer.get(bytes);
-                        Retrofit retrofit = new Retrofit.Builder()
-                                .baseUrl("http://192.168.0.100:8080/")
-                                .addConverterFactory(GsonConverterFactory.create())
-                                .build();
-
-                        retrofitInterface = retrofit.create(ApiService.class);
-
-                        // Отправка фотографии на сервер
-//                        sendPhotoToServer(bytes);
-                        sendDataToServer(bytes);
-                        image.close();
+                        processCapturedImage(image);
                     }
 
                     @Override
@@ -153,6 +163,14 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
+    private void processCapturedImage(ImageProxy image) {
+        ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+        byte[] bytes = new byte[buffer.capacity()];
+        buffer.get(bytes);
+        image.close();
+
+        sendDataToServer(bytes);
+    }
 
     private void sendDataToServer(byte[] bytes) {
         Map<String, String> json = new HashMap<>();
@@ -163,11 +181,19 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onResponse(Call<ResponseBody> call, Response<ResponseBody> response) {
                 if (response.isSuccessful()) {
-                    // Прочитать данные из ResponseBody
                     try {
+                        assert response.body() != null;
                         String responseData = response.body().string();
-                        System.out.println(responseData);
-                    } catch (IOException e) {
+                        JSONObject jsonObject = new JSONObject(responseData);
+                        String imageData = jsonObject.getString("compressed_data");
+                        byte[] imageBytes = Base64.decode(imageData, Base64.DEFAULT);
+
+                        // Создаем новый интент для запуска новой активности и передаем в него изображение
+                        Intent intent = new Intent(MainActivity.this, FullScreenImageActivity.class);
+                        intent.putExtra(EXTRA_IMAGE_BYTES, imageBytes);
+                        startActivity(intent);
+
+                    } catch (IOException | JSONException e) {
                         e.printStackTrace();
                         Log.e("MainActivity", "Failed to read response data");
                     }
@@ -182,4 +208,5 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
+
 }
